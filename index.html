@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spinner Penentu</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Styles for Scrollbars and Wheel Animation */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; /* slate-900 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; /* slate-700 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569; /* slate-600 */
+        }
+
+        #wheelCanvas {
+            /* Smooth deceleration cubic-bezier */
+            transition: transform 5s cubic-bezier(0.15, 0.85, 0.15, 1);
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .modal-overlay {
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease-out;
+        }
+        
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            transform: scale(0.8);
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200 font-sans min-h-screen flex flex-col items-center justify-center p-4 sm:p-8">
+
+    <!-- Main Container -->
+    <div class="max-w-5xl w-full flex flex-col-reverse md:flex-row gap-8 items-center justify-center">
+        
+        <!-- Left Panel: Inputs -->
+        <div class="w-full md:w-1/3 flex flex-col gap-6 bg-zinc-900 p-6 rounded-xl border border-zinc-800">
+            <div>
+                <h1 class="text-2xl font-light text-white mb-1 tracking-wide">SPINNER</h1>
+                <p class="text-xs text-zinc-500 mb-4 uppercase tracking-widest">Penentu Keputusan</p>
+            </div>
+
+            <!-- Semua Nama Input -->
+            <div class="flex flex-col gap-2">
+                <label for="allNames" class="text-xs font-semibold text-zinc-400 flex justify-between uppercase tracking-wider">
+                    <span>Daftar Nama</span>
+                    <span id="allCount" class="text-zinc-100">24</span>
+                </label>
+                <textarea id="allNames" rows="12" 
+                    class="w-full bg-zinc-950 text-zinc-300 rounded-md p-3 border border-zinc-800 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 outline-none resize-none text-sm leading-relaxed"
+                    placeholder="Masukkan nama per baris..."
+                ></textarea>
+            </div>
+
+            <button id="spinBtn" onclick="spin()" class="mt-2 w-full py-4 bg-zinc-100 hover:bg-white text-zinc-950 font-bold tracking-widest uppercase rounded-md transition-all active:scale-[0.98]">
+                Putar
+            </button>
+        </div>
+
+        <!-- Right Panel: The Wheel -->
+        <div class="w-full md:w-2/3 flex justify-center relative aspect-square p-2">
+            
+            <!-- Wheel Wrapper -->
+            <div class="relative w-full h-full rounded-full shadow-2xl border-[6px] border-zinc-800 bg-zinc-900 overflow-hidden">
+                <!-- Canvas is rotated via JS -->
+                <canvas id="wheelCanvas" width="800" height="800"></canvas>
+                
+                <!-- Inner Center Decoration -->
+                <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-zinc-950 rounded-full border-[4px] border-zinc-200 shadow-inner z-10 flex items-center justify-center">
+                    <div class="w-4 h-4 bg-zinc-200 rounded-full"></div>
+                </div>
+            </div>
+
+            <!-- Pointer (Positioned on the Right side -> 0 degrees mathematically) -->
+            <div class="absolute right-0 top-1/2 transform -translate-y-1/2 translate-x-2 md:translate-x-4 z-20 drop-shadow-xl">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2 12L22 2L22 22L2 12Z" fill="#18181b" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Winner Modal -->
+    <div id="winnerModal" class="modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/90 backdrop-blur-md p-4">
+        <div class="modal-content bg-zinc-900 border border-zinc-800 p-10 rounded-xl shadow-2xl text-center max-w-sm w-full relative">
+            <p class="text-zinc-500 font-semibold mb-2 uppercase tracking-widest text-xs">Terpilih</p>
+            <h2 id="winnerText" class="text-4xl font-light text-white mb-8 break-words">Nama Pemenang</h2>
+            
+            <button onclick="closeModal()" class="px-8 py-3 bg-zinc-100 hover:bg-white text-zinc-900 font-bold uppercase tracking-widest text-sm rounded-md transition-colors w-full">
+                Selesai
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('wheelCanvas');
+        const ctx = canvas.getContext('2d');
+        const allNamesInput = document.getElementById('allNames');
+        const spinBtn = document.getElementById('spinBtn');
+        const modal = document.getElementById('winnerModal');
+        
+        let currentRotation = 0;
+        let isSpinning = false;
+        let allNames = [];
+
+        // Monochrome Color Generator
+        const monoColors = ["#ffffff", "#e5e5e5"];
+        function getSleekColor(index, total) {
+            // Mencegah warna yang sama bersebelahan di potongan terakhir jika jumlahnya ganjil
+            if (total % 2 !== 0 && index === total - 1) {
+                return "#cccccc"; 
+            }
+            return monoColors[index % 2];
+        }
+
+        // Initialize Defaults
+        function init() {
+            let defaultAllNames = [
+                "aulia", "cikal", "dedek", "nevan", "erwin", "fahri", 
+                "zahra", "nadin", "kayla", "tiara", "natan", "sadam", 
+                "jura", "sasa", "siti", "monik", "rahmad", "lulu", 
+                "ihsan", "taufik", "zaki", "bram", "rifki", "leti"
+            ];
+            allNamesInput.value = defaultAllNames.join('\n');
+
+            updateAndDraw();
+
+            // Event Listeners for live update
+            allNamesInput.addEventListener('input', updateAndDraw);
+        }
+
+        function getNames(textareaId) {
+            return document.getElementById(textareaId).value
+                .split('\n')
+                .map(n => n.trim())
+                .filter(n => n.length > 0);
+        }
+
+        function updateAndDraw() {
+            allNames = getNames('allNames');
+            document.getElementById('allCount').innerText = allNames.length;
+            drawWheel();
+        }
+
+        function drawWheel() {
+            const width = canvas.width;
+            const height = canvas.height;
+            const cx = width / 2;
+            const cy = height / 2;
+            const radius = Math.min(cx, cy);
+
+            ctx.clearRect(0, 0, width, height);
+
+            if (allNames.length === 0) return;
+
+            const sliceAngle = (2 * Math.PI) / allNames.length;
+
+            for (let i = 0; i < allNames.length; i++) {
+                // Draw Slice Background
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, radius, i * sliceAngle, (i + 1) * sliceAngle);
+                ctx.fillStyle = getSleekColor(i, allNames.length);
+                ctx.fill();
+                
+                // Draw border for sleek separation
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#27272a'; // Match the border
+                ctx.stroke();
+
+                // Draw Text
+                ctx.save();
+                ctx.translate(cx, cy);
+                // Rotate to center of the slice
+                ctx.rotate(i * sliceAngle + sliceAngle / 2);
+                
+                ctx.textAlign = "right";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = "#000000"; // Teks hitam untuk tema monokrom
+                // Adjust font size based on number of items
+                let fontSize = allNames.length > 30 ? 14 : allNames.length > 15 ? 18 : 24;
+                ctx.font = `600 ${fontSize}px sans-serif`;
+                
+                // Draw text slightly inset from the edge
+                ctx.fillText(allNames[i], radius - 40, 0);
+                ctx.restore();
+            }
+        }
+
+        function spin() {
+            if (isSpinning) return;
+            
+            allNames = getNames('allNames');
+            
+            // Nama-nama yang disembunyikan dan dijamin tidak akan pernah terpilih
+            const immuneNames = ["leti", "sasa", "rahmad", "natan", "sadam", "dedek"];
+
+            if (allNames.length === 0) {
+                alert("Masukkan minimal 1 nama!");
+                return;
+            }
+
+            isSpinning = true;
+            spinBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            // --- THE RIGGED LOGIC ---
+            // 1. Create array of valid candidates (all names excluding immune names)
+            // Case-insensitive comparison for better reliability
+            const immuneLower = immuneNames.map(n => n.toLowerCase());
+            let validNames = allNames.filter(name => !immuneLower.includes(name.toLowerCase()));
+            
+            // Fallback: If for some reason the user made ALL names immune, 
+            // pick from allNames to prevent infinite loop / error
+            if (validNames.length === 0) validNames = allNames;
+
+            // 2. Select a winner randomly from the VALID pool
+            const winner = validNames[Math.floor(Math.random() * validNames.length)];
+            
+            // 3. Find exactly where this winner is on the wheel
+            const winnerIndex = allNames.indexOf(winner);
+
+            // --- MATH FOR SPINNING ---
+            // Canvas standard: 0 degrees is directly to the RIGHT (3 o'clock position).
+            // Our pointer is also positioned directly on the RIGHT.
+            const totalSlices = allNames.length;
+            const sliceAngleDeg = 360 / totalSlices;
+            
+            // The center of the winner's slice in degrees
+            const centerAngle = (winnerIndex * sliceAngleDeg) + (sliceAngleDeg / 2);
+
+            // Calculate offset so the pointer doesn't always hit the exact mathematical center of the slice (looks unnatural).
+            // Random offset within 40% of the slice width to keep it safely inside the borders
+            const randomOffset = (Math.random() - 0.5) * (sliceAngleDeg * 0.8);
+            
+            // Calculate the required rotation to bring this slice to 0 degrees (the right side)
+            // We use (360 - center) because CSS transform rotates clockwise, pushing slices forward.
+            const targetRotationMod = (360 - centerAngle + randomOffset) % 360;
+
+            // Define base spins (e.g., spin fully 6 times before stopping)
+            const spins = 6;
+            const baseSpinDeg = 360 * spins;
+
+            // Find where we are currently at (modulo 360)
+            const currentMod = currentRotation % 360;
+            
+            // Calculate shortest path to the new target
+            let diff = targetRotationMod - currentMod;
+            if (diff < 0) diff += 360; // ensure it rotates forward
+
+            // Apply to the global rotation counter
+            currentRotation += baseSpinDeg + diff;
+
+            // Apply CSS Transition
+            canvas.style.transform = `rotate(${currentRotation}deg)`;
+
+            // Wait for animation (5 seconds as defined in CSS)
+            setTimeout(() => {
+                showModal(winner);
+                isSpinning = false;
+                spinBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }, 5000);
+        }
+
+        function showModal(winnerName) {
+            document.getElementById('winnerText').innerText = winnerName;
+            modal.classList.add('active');
+        }
+
+        function closeModal() {
+            modal.classList.remove('active');
+        }
+
+        // Initialize on load
+        window.onload = init;
+    </script>
+</body>
+</html>
